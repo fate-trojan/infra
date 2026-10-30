@@ -251,6 +251,48 @@ a { color: inherit; text-decoration: none; }
   letter-spacing: 0.02em;
   color: var(--muted);
 }
+.code-example {
+  margin: 14px 0 2px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.code-example figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 12px;
+}
+.code-example figcaption span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.code-example pre {
+  margin: 0;
+  padding: 13px 15px;
+  overflow-x: auto;
+  background: var(--bg2);
+}
+.code-example code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  color: var(--ink);
+  font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+}
+.code-note {
+  padding: 9px 13px;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+.code-note a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .book-body + .item { margin-top: 8px; }
 /* 最新进展：2026 年 10 月 DeepSeek 开源推理栈 */
 .book-body.latest {
@@ -1086,6 +1128,21 @@ footer a { color: var(--accent); }
 <p>CUDA 执行一个 kernel 时会启动多个线程。若干线程组成一个线程块（thread block），所有线程块组成一个线程网格（grid）。矩阵乘通常把输出矩阵分成多个 tile，交给不同线程块计算，块内线程协作读取输入并累加结果。加速器将线程块安排到有可用资源的 SM 上。较早完成的块释放资源，后续块便可开始；因此，grid 中的线程块可以分批执行。</p>
 <p>kernel launch 采用异步提交。调用返回时，CPU 已完成这次提交，GPU 则按照任务队列和依赖关系执行。CPU 可以立即准备下一项任务。只有当 CPU 要用加速器的结果，或者要覆盖加速器还在使用的数据时，CPU 才需要等相应的加速器操作完成。34</p>
 <p>这种分工形成一条简单流水：CPU 准备并提交任务，GPU 执行任务。大矩阵计算持续较久，CPU 有时间准备下一次调用；小算子迅速结束，GPU 更容易执行完队列中的任务，停下来等待 CPU 提交下一项。因此，可以从两方面加速：减少加速器等待主机的时间，以及缩短 kernel 本身的执行时间。</p>
+<figure class="code-example"><figcaption><strong>例：向量加法 kernel 与启动配置</strong><span>C++ / CUDA</span></figcaption><pre><code class="language-c++ / cuda">__global__ void vec_add(const float* a, const float* b,
+                         float* c, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i &lt; n) {
+        c[i] = a[i] + b[i];
+    }
+}
+
+void launch_vec_add(const float* a, const float* b,
+                    float* c, int n) {
+    constexpr int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    vec_add&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(a, b, c, n);
+}</code></pre><div class="code-note">假定 n > 0，且 a、b、c 已指向设备内存；省略内存分配、错误检查与同步。启动配置分别给出 grid 和 block；kernel launch 对主机是异步提交。参考：<a href="https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html" target="_blank" rel="noopener noreferrer">CUDA Programming Guide</a>。</div></figure>
+
       </div>
         <div class="item" id="b2-3-0">
           <a href="https://zhuanlan.zhihu.com/p/2062964520604131880?utm_medium=openapi_platform&utm_source=b38f6831b176" target="_blank" rel="noopener noreferrer">
@@ -1501,6 +1558,20 @@ footer a { color: var(--accent); }
 <p>设矩阵峰值为 P，片外带宽为 R，投影工作量与访问量分别为 F、V。计算与数据传输所需的时间分别为 F/P 和 V/R。计算与访问充分重叠时，较大者决定时间下界，对应 Roofline 模型的吞吐上界为</p>
 <p><br>P_{\mathrm{attainable}}\le\min(P,RI),\qquad I=F/V.<br></p>
 <p>这里的斜线 RI 描述带宽能够支撑多少运算，水平线 P 描述矩阵单元能够完成多少运算。两者在 I^*=P/R 相交。低于交点时，数据供应较慢；高于交点时，每字节已对应足够多运算，计算速度成为新的瓶颈。这条折线就是硬件允许的上限，任何实测点都落在折线之下；实测吞吐与折线的距离，就是第 1.2.2 节定义的利用率。算术强度高于交点时用 MFU 衡量，低于交点时用 MBU 衡量。</p>
+<figure class="code-example"><figcaption><strong>例：计算 Roofline 吞吐上界与转折点</strong><span>Python</span></figcaption><pre><code class="language-python">def roofline_upper_bound(ai_flop_per_byte, peak_tflops, bandwidth_tb_s):
+    memory_bound_tflops = ai_flop_per_byte * bandwidth_tb_s
+    return min(peak_tflops, memory_bound_tflops)
+
+peak_tflops = 165.2
+bandwidth_tb_s = 1.008
+ridge_point = peak_tflops / bandwidth_tb_s
+
+for ai in (1, 164, 256):
+    ceiling = roofline_upper_bound(ai, peak_tflops, bandwidth_tb_s)
+    print(f"AI={ai:&gt;3} FLOP/byte -&gt; {ceiling:.1f} TFLOP/s")
+
+print(f"ridge point: {ridge_point:.1f} FLOP/byte")</code></pre><div class="code-note">采用十进制 TFLOP/s 与 TB/s，假设计算和访存可充分重叠；上界不包含缓存、启动开销及实际利用率。此处数值对应本节 RTX 4090 示例。</div></figure>
+
 <p>沿用第 4.1 节输入与权重读一次、输出写一次的投影，RTX 4090 在 BF16 输入、FP32 累加时的矩阵运算峰值为 165.2 TFLOP/s，带宽为 1.008 TB/s。将同一组 F 和 V 代入，得到：2</p>
 <p>本次处理的 token 数 M | <br>矩阵计算时间 | <br>片外数据传输时间 | <br>两项耗时的最大值 | <br>主导资源 |</p>
 <p>M=1 | <br>约 0.20 μs | <br>约 33.3 μs | <br>约 33.3 μs | <br>内存 |</p>
@@ -1923,6 +1994,23 @@ footer a { color: var(--accent); }
 <p><br>\ell&#x27;=r\ell+\sum_jp_j,\qquad u&#x27;=ru+\sum_jp_jV_j.<br></p>
 <p>右侧求和只遍历新块中的 j，旧块的全部贡献已经保存在 \ell 与 u 中，无需重新读回旧分数。</p>
 <p>FlashAttention 正是利用这一递推关系省去了完整 S 和 P 的存储。每处理完一块，就更新 m、\ell 和 u；该块的分数和概率用完即可丢弃，其缓冲可以留给下一块。在相同注意力范围内，查询与键的匹配、值的加权仍然都要算；改变的是计算顺序与中间结果的保存方式，浮点执行还会有舍入差异。</p>
+<figure class="code-example"><figcaption><strong>例：分块在线 Softmax 的核心更新</strong><span>Python 伪代码</span></figcaption><pre><code class="language-python 伪代码"># Q_i: [Bq, d]; each K_j, V_j is one block of keys / values
+m = full((Bq,), -inf, dtype=float32)
+ell = zeros((Bq,), dtype=float32)
+u = zeros((Bq, d), dtype=float32)
+
+for K_j, V_j in kv_blocks:
+    scores = (Q_i @ K_j.T) * scale
+    m_new = maximum(m, scores.max(axis=1))
+    alpha = exp(m - m_new)
+    P = exp(scores - m_new[:, None])
+
+    ell = alpha * ell + P.sum(axis=1)
+    u = alpha[:, None] * u + P @ V_j
+    m = m_new
+
+O_i = u / ell[:, None]</code></pre><div class="code-note">这是说明递推关系的伪代码，假设每个 query 至少能看到一个 key；省略因果掩码、dropout、边界块处理和 GPU 并行细节。m、ell 与 u 按 FP32 累积。参考：<a href="https://arxiv.org/abs/2205.14135" target="_blank" rel="noopener noreferrer">FlashAttention 论文</a>。</div></figure>
+
 <p>这样就把存储完整分数矩阵的问题，变成了在快速存储中安排当前块的问题。接下来确定一次处理多少行 Q、多少行 K/V，才能更好地利用这块空间。取 RTX PRO 6000 一个线程块可用的 99 KB 共享内存（101,376 bytes）作快速缓冲，一次保留 a 行 Q 与 FP32 输出累加器，分数块大小为 a×b。K 与 V 按阶段复用同一个 b×d 输入槽，分数和概率复用一个 a×b 槽，另为逐行统计和更新暂存分配三个 FP32 向量。局部存储需求为：</p>
 <p><br>S=\underbrace{2ad}_{Q}+\underbrace{2bd}_{K/V\text{ 槽}}+\underbrace{4ab}_{\text{分数/概率}}+\underbrace{4ad}_{\text{输出累加器}}+\underbrace{12a}_{\text{逐行状态}}\le101376.<br></p>
 <p>K/V 块越小，其自身和分数块占用越少，就能容纳更多 Q 行。更多 Q 行共享一次 K/V 扫描，整份 K/V 被重读的次数随之减少。取 b=64，能容纳 a=82 行 Q，需要 \lceil8192/82\rceil=100 次完整扫描。每次读 4 MiB 的 K/V，另有一次 Q 读取和 O 写回，共 100\times4+4=404 MiB。</p>
@@ -2317,6 +2405,20 @@ footer a { color: var(--accent); }
 <p>下面用完整的例子说明这两种切法。输入为 x=[2,3]，权重矩阵为 W=\begin{bmatrix}1&amp;4\\2&amp;5\end{bmatrix}，输出是 xW=[8,23]。按权重矩阵的列切分，也就是把输出特征分给不同的卡：卡 0 保存第一列，得到输出的第一个元素 8；卡 1 保存第二列，得到第二个元素 23。两个元素并排拼接，就得到完整输出。</p>
 <p>图 6-7：按权重矩阵的列切分时，每张卡使用完整输入，计算不同的输出元素。格内的转置符号 T 表示把方括号中横排的数当作列向量。</p>
 <p>改为按权重矩阵的行切分，也就是把同一个 token 的输入特征分给不同的卡：卡 0 用输入 2 乘第一行，得到 [2,8]；卡 1 用输入 3 乘第二行，得到 [6,15]。两张卡各得到一个含两个元素的向量，但每个向量只包含一行权重的贡献；对应位置相加后，才得到完整输出 [8,23]。</p>
+<figure class="code-example"><figcaption><strong>例：行切分线性层并汇总部分和</strong><span>Python / PyTorch</span></figcaption><pre><code class="language-python / pytorch">import torch
+import torch.distributed as dist
+import torch.nn.functional as F
+
+# x_local: [batch, in_features / tp]
+# w_local: [out_features, in_features / tp]
+partial = F.linear(x_local, w_local, bias=None)
+dist.all_reduce(partial, op=dist.ReduceOp.SUM, group=tp_group)
+
+# Add bias once, after the partial outputs have been summed.
+if bias is not None:
+    partial = partial + bias
+y = partial</code></pre><div class="code-note">假设输入特征维和权重输入维按 tp_group 中的 rank 等分，进程组已初始化，且每个 rank 持有对应的 x_local、w_local。此行切分产生相同形状的部分输出，因此用 SUM AllReduce 恢复完整结果。参考：<a href="https://docs.pytorch.org/docs/stable/distributed.html" target="_blank" rel="noopener noreferrer">torch.distributed</a>。</div></figure>
+
 <p>图 6-8：按权重矩阵的行切分时，两卡产生形状相同的输出部分和。对应位置相加，恢复完整乘法的结果。</p>
 <p>两种切法在 FFN 中可以首尾相接，即图 6-5 下半部分的切法。这里采用第 2 章介绍的 SwiGLU：将输入送入门控投影与上投影，门控结果经过激活函数 SiLU，再与另一支逐元素相乘，最后执行下投影。设本次一起处理 m 个 token，隐藏宽度为 h，中间宽度为 f。输入为 X\in\mathbb{R}^{m\times h}，上投影为 W_g,W_u\in\mathbb{R}^{h\times f}，下投影为 W_d\in\mathbb{R}^{f\times h}：</p>
 <p><br>Y=\left[\operatorname{SiLU}(XW_g)\odot(XW_u)\right]W_d.<br></p>
@@ -2960,6 +3062,14 @@ footer a { color: var(--accent); }
 <p>融合让相邻操作在一个 kernel 中衔接。例如归约后还要加残差并做 RMSNorm，分开执行会把结果写回再读入，并经过多次启动；融合后可以在数据仍靠近计算单元时继续处理。归一化必须等归约得到完整输入之后再做：忽略用于避免除零的小常数 epsilon 和可学习缩放参数，\operatorname{RMSNorm}([1,0]+[0,1])=[1,1]，分别归一化再相加却得到 [\sqrt2,\sqrt2]。融合必须保持这一执行顺序，才能得到相同的计算结果。</p>
 <p>加速器发起省去主机提交与加速器执行之间的往返：一个 kernel 算出数据后，可以直接发起后续通信，缩短从计算完成到通信开始的等待。专用卸载把搬移、归约或同步交给复制引擎、通信处理单元或交换机内的逻辑，把通用计算单元腾出来做矩阵计算。</p>
 <p>昇腾的集合通信单元（CCU）将搬移、归约、同步和完成处理集中到通信单元；NCCL 的部分路径用节点内复制引擎（Copy Engine）与节点间 CPU 代理线程（替 GPU 向网卡提交请求的主机线程）承担数据搬移。这些机制改变的是由谁来做这些工作。若计算慢在与通信争用 SM，把 SM 让出来就能缩短计算；若瓶颈在共用的网络出口，出口要传的字节数并没有减少。2111</p>
+<figure class="code-example"><figcaption><strong>例：在 CUDA stream 上提交 NCCL AllReduce</strong><span>C++ / CUDA / NCCL</span></figcaption><pre><code class="language-c++ / cuda / nccl">// One call per rank; buffers live on the rank's GPU.
+NCCL_CHECK(ncclAllReduce(
+    d_send, d_recv, count, ncclFloat, ncclSum, comm, stream));
+
+// Needed only before the host reads the result.
+// A later GPU consumer on the same stream can follow without this wait.
+CUDA_CHECK(cudaStreamSynchronize(stream));</code></pre><div class="code-note">假设 comm 与 stream 已初始化，d_send/d_recv 位于设备内存，且 NCCL_CHECK、CUDA_CHECK 为已定义的错误检查宏。所有 rank 必须以匹配的顺序、count 和数据类型调用集合通信。参考：<a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html" target="_blank" rel="noopener noreferrer">NCCL Collective Operations</a>。</div></figure>
+
 <p>通信请求由谁发起，决定控制路径要穿越几次 PCIe，也决定占用谁的核。图 6-29 比较三种位置。CPU 代理线程：GPU 算完数据后在主机内存里写一个就绪标志，CPU 线程轮询到它，构造请求描述符（描述一次传输的记录）、敲响网卡的门铃（写网卡的一个寄存器，通知它有新请求），网卡再从主机内存读取请求描述符；完成记录也写回主机，由 CPU 转告 GPU。控制路径要穿越 PCIe 三次，每次都是几百纳秒；一个 CPU 线程每秒能处理的请求也有限，大批小请求会在这里排队。GPU 的 SM：GPU 直接在自己的内存里构造请求描述符并敲门铃，网卡从 GPU 内存读取请求描述符，完成记录写回 GPU 内存供 SM 轮询。CPU 退出了关键路径，控制路径仍要穿越 PCIe 两次；代价是要分出一部分 SM 来构造请求和轮询完成，这些 SM 不能同时做矩阵计算。NVIDIA 的 GPUDirect Async 和专家并行通信库 DeepEP 的低延迟 kernel 采用的是这条路径。网卡上的处理器：BlueField 这类网卡内置多核多线程的数据通路处理器，构造请求描述符、敲门铃、取请求描述符都可以留在网卡内部，主机只需为一批操作发一次触发；控制路径不再穿越 PCIe，也不占用 SM 和 CPU 核。三种位置下，发起端的载荷从 GPU 内存搬出、完成记录写回 GPU 内存，各穿越 PCIe 一次，这两项不随发起位置改变；对端网卡读写它所在主机的内存，还要在对端再穿越一次 PCIe。取舍因此是：由谁提供核、控制路径多长、每秒能发起多少请求。第 7.3.3 节将累加每次穿越的时间，第 7.3.4 节再把发起速率纳入吞吐模型。29</p>
 <p>图 6-29：三种发起位置。橙色是构造请求描述符的部件；虚线是 PCIe 边界。CPU 代理线程的控制路径穿越 PCIe 三次，GPU 发起两次，网卡上的处理器零次；发起端的载荷与完成记录在三种方式下都各穿越一次。</p>
 <p>回到本节开头的 128 次小数据量归约。框架会按数据量和连接方式选择通信实现。Qwen3-32B 一次处理 1、4、16 个 token 时，归约输入分别为 10、40、160 KiB，vLLM 等框架可以为这些小数据量选用专门的实现。由此，式（6-5）中的 T_{\mathrm{AR}} 有了两个改进方向：减少算法轮次，或缩短每轮的软件与执行开销。10</p>
